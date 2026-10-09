@@ -1,0 +1,11 @@
+{
+  "name": "crazy-bot-kori",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "Crazy Bot / Kori – deutscher Discord-Bot mit geschütztem Dashboard",
+  "engines": { "node": ">=20" },
+  "scripts": { "start": "node src/index.js", "check": "node --check src/index.js" },
+  "dependencies": { "discord.js": "^14.19.3", "dotenv": "^16.5.0", "express": "^5.1.0" }
+}
+
