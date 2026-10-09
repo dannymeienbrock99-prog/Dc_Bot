@@ -29,9 +29,9 @@ Mitglieder schreiben Zahlen im eingestellten Zählkanal. Eine falsche Zahl setzt
 
 ## Stand der Funktionen
 
-Bereits enthalten: deutsches Dashboard mit Schlüssel, Regelbutton und Mitgliedsrolle, Kanalzugang pro neuem Mitglied, Zählspiel, Hangman, Setup-Formular, Geburtstage, Wörterfilter mit Verwarnung/Timeout/Bann, Tickets, private Beschwerde- und Bewerbungsformulare, eigene Slash-Befehle und rollenbasierte Dashboard-Freigabe.
+Bereits enthalten: deutsches Dashboard mit Schlüssel, Regelbutton und Mitgliedsrolle, Kanalzugang pro neuem Mitglied, Zählspiel und Hangman mit Rollenfreigaben, Setup-Formular, Geburtstage, Wörterfilter mit Verwarnung/Timeout/Bann, private Tickets, Beschwerde- und Bewerbungsformulare mit getrennten Einreichungs- und Prüfrollen, eigene Slash-Befehle sowie Rollenpräfixe und Rollenfarben.
 
-Noch auszubauen: vollständiger Plattform-Rollenpicker, Bilder und Komponenten im Setup, Soundwiedergabe, Ticket-Transkript und Wiederöffnung, Beweisdatei-Uploads, individuelle Vorlagen pro Formular, TikTok-Abfrage, wiederkehrende Werbeplanung, Rollenpräfixe automatisch auf Nicknames anwenden, ausführliche Moderationsprotokolle und geschützter separater Entbannungsweg. TikTok benötigt eine zuverlässige Datenquelle/API; Discord kann normalen Text nicht beliebig pro Namensbestandteil einfärben.
+Noch auszubauen: vollständiger Plattform-Rollenpicker, Bilder und Komponenten im Setup, Soundwiedergabe, Ticket-Transkript und Wiederöffnung, Beweisdatei-Uploads, individuelle Vorlagen pro Formular, TikTok-Abfrage, wiederkehrende Werbeplanung, ausführliche Moderationsprotokolle und geschützter separater Entbannungsweg. TikTok benötigt eine zuverlässige Datenquelle/API; Discord kann normalen Text nicht beliebig pro Namensbestandteil einfärben.
 
 Dies ist eine neu zusammengesetzte Testbasis, kein fertiger öffentlicher Produktivbetrieb. Prüfe Berechtigungen und Einstellungen zuerst auf einem Testserver.
 
