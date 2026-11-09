@@ -4,6 +4,9 @@ import path from 'node:path';
 import express from 'express';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, Client, EmbedBuilder, Events, GatewayIntentBits, ModalBuilder, PermissionFlagsBits, REST, Routes, SlashCommandBuilder, TextInputBuilder, TextInputStyle } from 'discord.js';
 import { dataPath, readConfig, writeConfig } from './config.js';
+import { usesWebsiteCalendar, websiteCalendarUrl, parseBirthday, fetchWebsiteCalendar, formatWebsiteCalendar, sendLegacyBirthdays, daysUntilBirthday } from './birthdays.js';
+import { upsertCommands } from './register-commands.js';
+import { builtinCommands } from './commands.js';
 
 const env = process.env;
 if (!env.DISCORD_TOKEN || !env.DISCORD_CLIENT_ID) throw new Error('DISCORD_TOKEN und DISCORD_CLIENT_ID müssen als sichere Umgebungsvariablen gesetzt sein.');
@@ -14,25 +17,16 @@ const saveState = () => fs.writeFileSync(stateFile, JSON.stringify(state, null, 
 let config = readConfig();
 const userHasAny = (member, roles) => !roles?.length || roles.some(id => member.roles.cache.has(id));
 const roleIdPattern = /^\d{17,20}$/;
-const slash = [
-  new SlashCommandBuilder().setName('bot').setDescription('Informationen über Kori').addSubcommand(s=>s.setName('status').setDescription('Zeigt den Verbindungsstatus.')),
-  new SlashCommandBuilder().setName('regeln').setDescription('Regeln veröffentlichen oder Zugang bestätigen').addSubcommand(s=>s.setName('veroeffentlichen').setDescription('Regelbestätigung im Kanal veröffentlichen').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)),
-  new SlashCommandBuilder().setName('hangman').setDescription('Hangman spielen').addSubcommand(s=>s.setName('start').setDescription('Startet ein neues Hangman-Spiel')),
-  new SlashCommandBuilder().setName('gaming_setup').setDescription('Gaming-Setup verwalten').addSubcommand(s=>s.setName('bearbeiten').setDescription('Setup anlegen oder bearbeiten')),
-  new SlashCommandBuilder().setName('geburtstag').setDescription('Geburtstag verwalten').addSubcommand(s=>s.setName('speichern').setDescription('Geburtstag speichern').addStringOption(o=>o.setName('datum').setDescription('TT.MM.').setRequired(true))).addSubcommand(s=>s.setName('anzeigen').setDescription('Gespeicherten Geburtstag anzeigen')).addSubcommand(s=>s.setName('entfernen').setDescription('Geburtstag entfernen')),
-  new SlashCommandBuilder().setName('beschweren').setDescription('Private Beschwerde über ein Mitglied einreichen').addUserOption(o=>o.setName('mitglied').setDescription('Gemeldete Person').setRequired(true)),
-  new SlashCommandBuilder().setName('bewerbung').setDescription('Bewerbung oder Antrag einreichen').addStringOption(o=>o.setName('art').setDescription('Formularart').setRequired(true).addChoices({name:'Moderator',value:'Moderatorbewerbung'},{name:'Produkttester',value:'Produkttesterbewerbung'},{name:'Entbannung',value:'Entbannungsantrag'})),
-  new SlashCommandBuilder().setName('ticket').setDescription('Privates Support-Ticket öffnen'),
-  new SlashCommandBuilder().setName('dashboard').setDescription('Geschützten Dashboard-Link anzeigen')
-];
+const slash = builtinCommands();
 function commands() {
-  const dynamic = (config.customCommands || []).filter(c=>c.enabled && /^[a-z0-9_-]{1,32}$/.test(c.name||'')).map(c=>new SlashCommandBuilder().setName(c.name).setDescription(String(c.description||'Eigener Serverbefehl').slice(0,100)));
+  const reserved = new Set([...slash.map(command=>command.name), 'geburtstage']);
+  const dynamic = (config.customCommands || []).filter(c=>c.enabled && !reserved.has(c.name) && /^[a-z0-9_-]{1,32}$/.test(c.name||'')).map(c=>new SlashCommandBuilder().setName(c.name).setDescription(String(c.description||'Eigener Serverbefehl').slice(0,100)));
   return [...slash, ...dynamic].map(c=>c.toJSON());
 }
 async function register() {
   const rest = new REST({ version:'10' }).setToken(env.DISCORD_TOKEN);
   const route = env.DISCORD_GUILD_ID ? Routes.applicationGuildCommands(env.DISCORD_CLIENT_ID, env.DISCORD_GUILD_ID) : Routes.applicationCommands(env.DISCORD_CLIENT_ID);
-  await rest.put(route, { body:commands() });
+  await upsertCommands(rest, route, commands());
 }
 function isAdmin(interaction) {
   const owner = config.dashboard.ownerIds?.includes(interaction.user.id) || interaction.guild?.ownerId === interaction.user.id;
@@ -57,7 +51,7 @@ async function sendPrivateReview(interaction, type, answers) {
   await channel.send({embeds:[embed],allowedMentions:{parse:[]}});
   return interaction.reply({content:'Danke! Deine Angaben wurden privat an die zuständige Moderation übermittelt.',ephemeral:true});
 }
-client.once(Events.ClientReady, async ready=>{ await register(); console.log(`Kori online: ${ready.user.tag}`); setInterval(()=>checkBirthdays().catch(console.error),60_000); });
+client.once(Events.ClientReady, async ready=>{ try { await register(); } catch(error) { console.error('Befehlsabgleich:', error.message); } console.log(`Kori online: ${ready.user.tag}`); await checkBirthdays(); setInterval(()=>checkBirthdays().catch(console.error),60_000); });
 client.on(Events.GuildMemberAdd, async member=>{
   if(config.gate.enabled){
     for(const channel of member.guild.channels.cache.values()) if(channel.type!==ChannelType.GuildCategory) await channel.permissionOverwrites.edit(member.id,{ViewChannel:(config.gate.publicChannelIds||[]).includes(channel.id) || channel.id===config.gate.rulesChannelId}).catch(()=>{});
@@ -129,8 +123,21 @@ client.on(Events.InteractionCreate, async i=>{
         return i.showModal(modal('Gaming-Setup','setup:save',[textInput('cpu','CPU',TextInputStyle.Short,false),textInput('gpu','Grafikkarte',TextInputStyle.Short,false),textInput('ram','RAM',TextInputStyle.Short,false),textInput('storage','Speicher',TextInputStyle.Short,false),textInput('extras','Weitere Teile',TextInputStyle.Paragraph,false)]));
       }
       if(i.commandName==='geburtstag'){
+        if(!i.guildId)return i.reply({content:'Bitte benutze den Geburtstagsbefehl auf dem Community-Server.',ephemeral:true});
         const sub=i.options.getSubcommand(), key=`birthday:${i.guildId}:${i.user.id}`;
-        if(sub==='speichern'){const date=i.options.getString('datum');if(!/^\d{2}\.\d{2}\.$/.test(date))return i.reply({content:'Bitte das Datum als TT.MM. angeben.',ephemeral:true});state[key]=date;saveState();return i.reply({content:'Geburtstag gespeichert. Du kannst ihn jederzeit ändern oder entfernen.',ephemeral:true});}
+        if(usesWebsiteCalendar(c.birthdays)){
+          const url=websiteCalendarUrl(c.birthdays);
+          if(sub==='speichern'||sub==='entfernen')return i.reply({content:`Deinen Geburtstag und seine Sichtbarkeit verwaltest du in deinem Website-Konto. Änderungen gelten für Webseite und Discord: ${url}`,ephemeral:true,allowedMentions:{parse:[]}});
+          await i.deferReply({ephemeral:true});
+          try {const entries=await fetchWebsiteCalendar(c.birthdays);return i.editReply({content:formatWebsiteCalendar(entries,c.birthdays),allowedMentions:{parse:[]}});}
+          catch {return i.editReply({content:`Der Kalender kann gerade nicht geladen werden. Du kannst ihn direkt auf der Webseite öffnen: ${url}`,allowedMentions:{parse:[]}});}
+        }
+        if(sub==='kalender'){
+          const entries=Object.entries(state).filter(([k,v])=>new RegExp(`^birthday:${i.guildId}:\\d{17,20}$`).test(k)&&parseBirthday(v)).map(([k,v])=>({userId:k.split(':')[2],date:v,days:daysUntilBirthday(parseBirthday(v))})).sort((a,b)=>a.days-b.days);
+          const lines=entries.slice(0,12).map(entry=>`${entry.date} · <@${entry.userId}> · ${entry.days===0?'heute':`in ${entry.days} Tagen`}`);
+          return i.reply({content:`🎂 **Geburtstage auf diesem Server**\n${lines.join('\n')||'Noch keine Geburtstage hinterlegt.'}`,ephemeral:true,allowedMentions:{parse:[]}});
+        }
+        if(sub==='speichern'){const date=i.options.getString('datum');if(!parseBirthday(date))return i.reply({content:'Bitte ein gültiges Datum als TT.MM. angeben, zum Beispiel 24.12.',ephemeral:true});state[key]=date;saveState();return i.reply({content:'Geburtstag gespeichert. Du kannst ihn jederzeit ändern oder entfernen.',ephemeral:true});}
         if(sub==='entfernen'){delete state[key];saveState();return i.reply({content:'Geburtstag entfernt.',ephemeral:true});}
         return i.reply({content:`Gespeichert: ${state[key]||'Noch kein Geburtstag hinterlegt.'}`,ephemeral:true});
       }
@@ -157,11 +164,22 @@ client.on(Events.InteractionCreate, async i=>{
     if(i.isButton() && i.customId==='ticket:close'){if(!isAdmin(i) && !i.channel.name.endsWith(i.user.username.toLowerCase()))return i.reply({content:'Nur Ticket-Ersteller oder Team dürfen schließen.',ephemeral:true});await i.channel.delete('Ticket geschlossen').catch(()=>{});}
   }catch(err){console.error(err);if(i.isRepliable()&&!i.replied)await i.reply({content:'Das hat gerade nicht geklappt. Prüfe bitte die Dashboard-Einstellungen.',ephemeral:true}).catch(()=>{});}
 });
-async function checkBirthdays(){const now=new Date();if(!config.birthdays.enabled||now.getHours()!==(config.birthdays.hour??9))return;for(const [key,date] of Object.entries(state)){if(!key.startsWith('birthday:')||key.includes(':sent:')||date!==`${String(now.getDate()).padStart(2,'0')}.${String(now.getMonth()+1).padStart(2,'0')}.`)continue;const sentKey=`${key}:sent:${now.getFullYear()}`;if(state[sentKey])continue;const [,guildId,userId]=key.split(':');const ch=config.birthdays.channelId&&await client.channels.fetch(config.birthdays.channelId).catch(()=>null);if(ch?.isTextBased())await ch.send({content:config.birthdays.message.replaceAll('{user}',`<@${userId}>`),allowedMentions:{users:[userId]}}).catch(()=>{});state[sentKey]=true;}saveState();}
+let checkingBirthdays=false;
+async function checkBirthdays(){if(checkingBirthdays)return;checkingBirthdays=true;try{await sendLegacyBirthdays({settings:config.birthdays,state,client,saveState,onError:error=>console.error('Geburtstagsgruß:',error.message)});}finally{checkingBirthdays=false;}}
 const app=express();app.use(express.json({limit:'1mb'}));
 const accessKey=env.DASHBOARD_ACCESS_KEY||'';
 app.use('/api',(req,res,next)=>{if(!accessKey)return res.status(503).json({error:'DASHBOARD_ACCESS_KEY fehlt. Dashboard-Zugang zuerst als Secret einrichten.'});if(req.header('authorization')!==`Bearer ${accessKey}`)return res.status(401).json({error:'Anmeldung erforderlich.'});next();});
 app.get('/api/config',(req,res)=>res.json(readConfig()));
+app.put('/api/config',(req,res,next)=>{
+  const settings=req.body?.birthdays;
+  if(!settings||typeof settings!=='object'||Array.isArray(settings))return res.status(400).json({error:'Die Geburtstagseinstellungen fehlen.'});
+  if(settings.websiteCalendarEnabled!==undefined&&typeof settings.websiteCalendarEnabled!=='boolean')return res.status(400).json({error:'Der Website-Kalender muss aktiviert oder deaktiviert sein.'});
+  try{websiteCalendarUrl(settings);}catch(error){return res.status(400).json({error:error.message});}
+  if(!Number.isInteger(settings.hour)||settings.hour<0||settings.hour>23)return res.status(400).json({error:'Die Uhrzeit muss zwischen 0 und 23 liegen.'});
+  if(settings.channelId&&!roleIdPattern.test(settings.channelId))return res.status(400).json({error:'Bitte einen gültigen Geburtstagskanal auswählen.'});
+  if(typeof settings.message!=='string'||!settings.message.trim()||settings.message.length>1800)return res.status(400).json({error:'Der Geburtstagsgruß muss 1 bis 1800 Zeichen enthalten.'});
+  next();
+});
 app.put('/api/config',async(req,res)=>{const c=req.body;if(!c||typeof c!=='object')return res.status(400).json({error:'Ungültige Einstellungen.'});for(const role of c.prefixes?.entries||[])if(role.roleId&&!roleIdPattern.test(role.roleId))return res.status(400).json({error:'Eine Rollen-ID ist ungültig. Discord-Rollen-IDs bestehen nur aus 17 bis 20 Ziffern.'});for(const roleId of [...(c.forms?.reviewRoleIds||[]),...(c.forms?.submitRoleIds||[])])if(!roleIdPattern.test(roleId))return res.status(400).json({error:'Eine Formular-Rollen-ID ist ungültig. Discord-Rollen-IDs bestehen aus 17 bis 20 Ziffern.'});config=c;writeConfig(config);const targetGuild=env.DISCORD_GUILD_ID&&client.guilds.cache.get(env.DISCORD_GUILD_ID);if(targetGuild&&config.prefixes?.enabled){for(const entry of config.prefixes.entries||[]){if(!entry.roleId||!/^#[a-f\d]{6}$/i.test(entry.color||''))continue;const role=targetGuild.roles.cache.get(entry.roleId);if(role)await role.edit({color:entry.color,reason:'Crazy Bot: Rollenfarbe im Dashboard eingestellt'}).catch(()=>{});}}for(const guild of client.guilds.cache.values())for(const member of guild.members.cache.values())await syncPrefix(member);try{await register();}catch(e){console.error('Befehlsabgleich:',e.message);}res.json({ok:true,message:'Einstellungen gespeichert. Rollenfarben und Präfixe wurden angewendet, soweit Kori die nötigen Rechte besitzt.'});});
 app.get('/api/status',(req,res)=>res.json({connected:client.isReady(),bot:client.user?.tag||'Offline',guilds:client.guilds.cache.size,version:'0.3.0'}));
 app.get('/api/discord-options',(req,res)=>{const guild=env.DISCORD_GUILD_ID&&client.guilds.cache.get(env.DISCORD_GUILD_ID);res.json({roles:guild?[...guild.roles.cache.values()].map(r=>({id:r.id,name:r.name})):[],channels:guild?[...guild.channels.cache.values()].filter(c=>c.type===ChannelType.GuildText).map(c=>({id:c.id,name:c.name})):[]});});

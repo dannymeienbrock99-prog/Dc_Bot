@@ -12,7 +12,7 @@ export const defaults = {
   counting: { enabled: true, channelId: id, start: 1, allowSameUser: false, allowedRoleIds: [], resetOnWrong: true },
   hangman: { enabled: true, channelId: id, allowedRoleIds: [], words: ['discord', 'gaming', 'computer', 'community'] },
   setups: { enabled: true, allowedRoleIds: [], channelId: id },
-  birthdays: { enabled: true, channelId: id, hour: 9, message: 'Alles Gute zum Geburtstag, {user}! 🎂' },
+  birthdays: { websiteCalendarEnabled: true, websiteCalendarUrl: 'https://crazybatto.de/geburtstage.html', enabled: true, channelId: id, hour: 9, message: 'Alles Gute zum Geburtstag, {user}! 🎂' },
   moderation: { enabled: false, words: [], exemptRoleIds: [], logChannelId: id, timeoutMinutes: 10, banAtThirdStrike: true },
   prefixes: { enabled: true, entries: [], manageRoleIds: [] },
   tickets: { enabled: true, categoryId: id, teamRoleIds: [], panelChannelId: id },
